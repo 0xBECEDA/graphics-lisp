@@ -1,0 +1,162 @@
+* Интро
+Графические инструменты, позволяющие рисовать графики.
+
+* Реализация
+
+На данный момент реализовано в зачаточном варианте:
+- заполнение графика заданным фоновым цветом
+- рисование осей заданным цветом
+- рисование делений на осях
+- сохранение изображения
+
+#+NAME
+#+BEGIN_SRC lisp :tangle
+  (ql:quickload "clx")
+  (ql:quickload "zpng")
+  (ql:quickload "png-read")
+
+  (defparameter *test-image-path* "./test.png")
+  (defparameter *default-width* 600)
+  (defparameter *default-heght* 600)
+
+  (defparameter *default-array* (zpng:data-array (make-instance 'zpng:png
+                                                                :color-type :truecolor-alpha
+                                                                :width 300
+                                                                :height 300)))
+  ;; сохраняет массив в виде изображения
+  (defun save-png (width height pathname-str image
+                   &optional (color-type :truecolor-alpha))
+    (let* ((png (make-instance 'zpng:png :width width :height height
+                               :color-type color-type))
+           (vector (make-array ;; displaced vector - need copy for save
+                    (* height width (zpng:samples-per-pixel png))
+                    :displaced-to image :element-type '(unsigned-byte 8))))
+      ;; Тут применен потенциально опасный трюк, когда мы создаем
+      ;; объект PNG без данных, а потом добавляем в него данные,
+      ;; используя неэкспортируемый writer.
+      ;; Это нужно чтобы получить третью размерность массива,
+      ;; который мы хотим передать как данные и при этом
+      ;; избежать создания для этого временного объекта
+      (setf (zpng::%image-data png) (copy-seq vector))
+      (zpng:write-png png pathname-str)))
+
+  ;; заполняет массив фоновым цветом
+  (defun write-background-color-trucolor (array r g b)
+    (destructuring-bind (hight width format)
+        (array-dimensions array)
+      (if (= format 4)
+          (do ((x 0 (incf x)))
+              ((= x width))
+            (do ((y 0 (incf y)))
+                ((= y hight))
+              ;; чтоб сохранить массив изображение, его придется "переворачивать"
+              ;; поэтому цвета записываются "задом наперед":
+              (setf (aref array y x 0) b
+                    (aref array y x 1) g
+                    (aref array y x 2) r
+                    (aref array y x 3) 255)))
+          (format
+           t "write-background-color-trucolor works only with truecolor-alpha images ~%"))))
+
+  ;; (write-background-color-trucolor *default-array* 0 255 0 )
+  ;; (save-png (array-dimension *default-array* 0)
+  ;;           (array-dimension *default-array* 1)
+  ;;           "./test.png"
+  ;;           *default-array*)
+
+
+  ;; рисует оси X и Y заданного в пикселях размера и цвета
+  ;; работает только с форматом truecolor-alpha
+  (defun write-axises (array x-axis-length y-axis-length r g b)
+    (destructuring-bind (hight width format)
+        (array-dimensions array)
+      (let ((start-x (* ( floor width 100) 10))
+            (start-y (* ( floor hight 100) 90)))
+        (if (or (< (- start-y y-axis-length) 0)
+                (> (+ start-x x-axis-length) width))
+            (format t "write-axises: Размер осей x и y превышает размер изображения! ~%")
+            (if (= format 4)
+                (progn
+                  (do ((x start-x (incf x)))
+                      ((= x (+ start-x x-axis-length)))
+                    (setf (aref array start-y x 0) b
+                          (aref array start-y x 1) g
+                          (aref array start-y x 2) r
+                          (aref array start-y x 3) 255))
+                  (do ((y start-y (decf y)))
+                      ((= y (- start-y y-axis-length)))
+                    (setf (aref array y start-x 0) b
+                          (aref array y start-x 1) g
+                          (aref array y start-x 2) r
+                          (aref array y start-x 3) 255)))
+                (format
+                 t "write-axises works only with truecolor-alpha images ~%"))))))
+
+  ;; (write-background-color-trucolor *default-array* 255 255 255)
+  ;; (write-axises *default-array* 200 200 255 56 98)
+  ;; (save-png (array-dimension *default-array* 1)
+  ;;           (array-dimension *default-array* 0)
+  ;;           "./test.png"
+  ;;           *default-array*)
+
+  (defun write-divs-on-axises (array x-axis-length y-axis-length r g b divs)
+    (destructuring-bind (hight width format)
+        (array-dimensions array)
+      (let* ((start-x (* ( floor width 100) 10))
+             (start-y (* ( floor hight 100) 90))
+             (divs-y-pixels (floor y-axis-length divs))
+             (divs-x-pixels (floor x-axis-length divs))
+             (divs-size (* ( floor width 100) 2)))
+        ;; (format t "divs-size ~A ~%" divs-size)
+        (if (or (< (- start-y y-axis-length) 0)
+                (> (+ start-x x-axis-length) width))
+            (format t "write-axises: Размер осей x и y превышает размер изображения! ~%")
+            (if (= format 4)
+                (progn
+                  ;; (format t "x ~A ~A ~%" x (+ start-x x-axis-length))
+                  (do ((x start-x (+ x divs-x-pixels)))
+                      ((>= x (+ start-x x-axis-length)))
+                    ;; (format t "x ~A ~%" x)
+                    (do ((y start-y (incf y)))
+                        ((= y (+ start-y divs-size)))
+                      (setf (aref array y x 0) b
+                            (aref array y x 1) g
+                            (aref array y x 2) r
+                            (aref array y x 3) 255)))
+                (do ((y start-y (- y divs-y-pixels)))
+                    ((<= y (- start-y y-axis-length)))
+                  ;; (format t "y ~A ~%" y)
+                    (do ((x start-x (decf x)))
+                        ((= x (- start-x divs-size)))
+                      ;; (format t "x ~A x-div ~A ~%" x (- x divs-size))
+                      (setf (aref array y x 0) b
+                            (aref array y x 1) g
+                            (aref array y x 2) r
+                            (aref array y x 3) 255)))))))))
+
+
+  ;; (write-background-color-trucolor *default-array* 255 255 255)
+  ;; (write-axises *default-array* 110 110 54 98 23)
+  ;; (write-divs-on-axises *default-array* 110 110 200 13 20 2)
+  ;; (save-png (array-dimension *default-array* 0)
+  ;;           (array-dimension *default-array* 1)
+  ;;           "./test.png"
+  ;;           *default-array*)
+
+
+  ;; (defun count-rec (chance healthy infected limit period time)
+  ;;   (if (>= infected limit)
+  ;;       time
+  ;;       (let* ((new-infected (* (/ healthy 100) chance))
+  ;;              (still-healthy (- healthy new-infected)))
+  ;;         (count-rec chance still-healthy (+ new-infected infected)
+  ;;                    limit period (+ period time)))))
+
+
+  ;; (defun cnt (chance amount limit period)
+  ;;   (count-rec chance amount 0 limit period 0))
+
+
+  ;; (cnt 1.879 4000 2000 3)
+
+#+END_SRC
